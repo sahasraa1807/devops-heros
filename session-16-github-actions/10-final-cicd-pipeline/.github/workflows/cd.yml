@@ -1,0 +1,53 @@
+name: Continuous Delivery & Deployment (CD) Pipeline
+
+on:
+  workflow_run:
+    workflows: ["Continuous Integration (CI) Pipeline"]
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  # ========================================================
+  # CD JOB: Docker Container Packaging & Delivery
+  # ========================================================
+  deliver-and-deploy:
+    name: Package Docker Image & Simulated Deployment
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Container Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: |
+            calculator-app:latest
+            calculator-app:${{ github.sha }}
+
+      - name: Run Container Smoke Verification
+        run: |
+          echo "Running smoke test on containerized application..."
+          docker run --rm calculator-app:latest
+
+      - name: Deploy / Delivery Verification Check
+        env:
+          DEPLOY_ENVIRONMENT: "production"
+          DEPLOYER_SECRET: ${{ secrets.DEMO_SECRET }}
+        run: |
+          echo "=========================================="
+          echo "  CD PIPELINE DEPLOYMENT SUMMARY          "
+          echo "=========================================="
+          echo " Target Environment : $DEPLOY_ENVIRONMENT"
+          echo " Commit SHA         : ${{ github.sha }}"
+          echo " Docker Image Tag   : calculator-app:${{ github.sha }}"
+          echo " Status             : SUCCESSFULLY DELIVERED"
+          echo "=========================================="

@@ -1,0 +1,136 @@
+name: End-to-End CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # ========================================================
+  # STAGE 1: CI - Test
+  # ========================================================
+  test:
+    name: "CI: Run Tests & Quality Checks"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Pytest Assertions
+        run: |
+          pytest -v tests/test_calculator.py
+
+      - name: Run CLI Demonstration
+        run: |
+          python app/calculator.py --demo
+
+  # ========================================================
+  # STAGE 2: DevSecOps - Security & Secret Check
+  # ========================================================
+  security-check:
+    name: "CI: Security & Secret Scan"
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Audit Repository for Sensitive Credentials
+        run: |
+          echo "Scanning workspace for sensitive credentials and keys..."
+          if find . -type f \( -name ".env" -o -name "*.pem" -o -name "*.key" \) | grep -q .; then
+            echo "[ERROR] Security check failed: Sensitive file discovered!"
+            exit 1
+          else
+            echo "[PASS] No plaintext credentials or keys committed."
+          fi
+
+      - name: Validate GitHub Secrets Context
+        env:
+          DEMO_SECRET: ${{ secrets.DEMO_SECRET }}
+        run: |
+          if [ -n "$DEMO_SECRET" ]; then
+            echo "[PASS] DEMO_SECRET is present and safely accessed."
+          else
+            echo "[INFO] DEMO_SECRET not configured. Proceeding safely."
+          fi
+
+  # ========================================================
+  # STAGE 3: CI - Build & Artifact Packaging
+  # ========================================================
+  build:
+    name: "CI: Build Application & Artifact"
+    runs-on: ubuntu-latest
+    needs: [test, security-check]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package Application
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calculator-build
+          path: build/
+          retention-days: 7
+
+  # ========================================================
+  # STAGE 4: CD - Container Delivery & Smoke Deployment
+  # ========================================================
+  cd-deliver:
+    name: "CD: Docker Build & Delivery"
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: calculator-build
+          path: downloaded-build/
+
+      - name: Build Docker Container Image
+        run: |
+          docker build -t calculator-app:${{ github.sha }} .
+          docker tag calculator-app:${{ github.sha }} calculator-app:latest
+
+      - name: Execute Container Smoke Verification
+        run: |
+          echo "Verifying containerized application run..."
+          docker run --rm calculator-app:latest
+
+      - name: CD Delivery Summary
+        run: |
+          echo "=========================================="
+          echo "  CONTINUOUS DELIVERY SUMMARY             "
+          echo "=========================================="
+          echo " Pipeline Status : ALL CHECKS PASSED"
+          echo " Image Tag       : calculator-app:latest"
+          echo " Artifact        : calculator-build uploaded"
+          echo " Ready for       : Kubernetes / Cloud Deploy"
+          echo "=========================================="
